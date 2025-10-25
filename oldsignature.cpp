@@ -134,8 +134,21 @@ int power(int n, int e)
 
 int main(int argc, char* argv[])
 {
+    if (argc < 2)
+    {
+        printf("Usage: %s <num_threads>\n", argv[0]);
+        return 1;
+    }
+
+    int num_threads = atoi(argv[1]);
+    if (num_threads <= 0)
+    {
+        fprintf(stderr, "Error: num_threads must be > 0 (got %d)\n", num_threads);
+        return 1;
+    }
+    (void)num_threads;
+
     const char* filename = "qut3.fasta";
-    //const char* filename = "qut3.fasta";
 
     WORDLEN = 3;
     PARTITION_SIZE = 16;
