@@ -1,0 +1,336 @@
+# Signature Generation Project – Technical Handover
+
+## 1. Overview
+
+This document captures everything that changed during the verification and optimisation work on the k‑mer signature generators, and explains how the final executables operate. It is written so another engineer (or reviewer) can reconstruct the full context, rebuild the binaries, reproduce the validation experiments, and understand the design of each implementation (legacy OG, std::thread, OpenMP, and the “final” VS-friendly builds).
+
+
+## 2. Codebase Layout (key files)
+
+| Path | Purpose |
+|------|---------|
+| `signature_plots/trueOG.cpp` | Original single-thread implementation (used for Linux verification; includes POSIX shims). |
+| `signature_plots/trueOG_vs.cpp` | Visual Studio faithful OG variant with CLI wrapper (`<num_threads> [input]`). |
+| `signature_stdthread.cpp` | Portable std::thread implementation. |
+| `signature_stdthread_vs.cpp` | Visual Studio wrapper of the std::thread build (CLI threads argument). |
+| `signature.cpp` | Portable OpenMP implementation. |
+| `signature_omp_vs.cpp` | Visual Studio wrapper of the OpenMP build. |
+| `ISAAC-rand.cpp` | ISAAC RNG implementation (seed and random helpers shared by all executables). |
+| `compare_signatures.py` | Validation utility (Hamming-distance checks + plots). |
+| `change_log.txt` | Chronological list of all modifications made during this session. |
+| `handover.md` | This document. |
+| `qut3.fasta`, `qut3_unix.fasta` | Dataset (original CRLF and LF-normalised copy). |
+
+
+## 3. Dependencies & How They Are Handled
+
+### C++ executables
+- **Compiler**: C++17-capable (`g++`, MSVC). OpenMP build requires `-fopenmp` or `/openmp`.
+- **Standard library**: `<thread>`, `<vector>`, `<array>`, `<fstream>`, `<chrono>`, etc.
+- **External**: `uthash.h` for vocabulary storage; bundled in repo.
+- **Randomness**: `ISAAC-rand.cpp` provides `seed_random`/`random_num`.
+- **Platform nuances**:
+  - `trueOG.cpp` includes POSIX shims for `fopen_s`/`sprintf_s`/`strncpy_s` so it compiles under GCC/Clang.
+  - VS variants (`*_vs.cpp`) remove those shims and rely on the MSVC safe-library APIs.
+  - All readers strip trailing `\r` when parsing FASTA lines; this avoids Windows vs Linux newline mismatches.
+
+### Python tooling
+- `compare_signatures.py` depends on Python 3, `matplotlib`, and standard modules (`struct`, `argparse`, `pathlib`). It is optional but used for validation and plotting.
+
+
+## 4. Build Instructions
+
+### Linux / macOS (g++)
+```bash
+# Legacy OG (portable)
+g++ -std=c++17 -O2 -I. signature_plots/trueOG.cpp ISAAC-rand.cpp -o trueOG_ref
+
+# std::thread
+g++ -std=c++17 -O2 signature_stdthread.cpp ISAAC-rand.cpp -pthread -o signature_stdthread_new
+
+# OpenMP
+g++ -std=c++17 -O2 -fopenmp signature.cpp ISAAC-rand.cpp -o signature_omp_ref
+```
+
+### Visual Studio (Windows)
+- Add the relevant `_vs.cpp` file(s) to the solution (`trueOG_vs.cpp`, `signature_stdthread_vs.cpp`, `signature_omp_vs.cpp`).
+- Enable `/openmp` for the OpenMP project.
+- Set **Command Arguments** under *Project Properties → Configuration Properties → Debugging*:
+  - OG: `1 qut3.fasta`
+  - std::thread: `8 qut3.fasta`
+  - OpenMP: `8 qut3.fasta`
+- Optional: set environment variable `OMP_NUM_THREADS=8` to mirror the command argument.
+
+
+## 5. Algorithm & Data Flow (all implementations)
+
+1. **Vocabulary signature generation**  
+   - Enumerate all 20³ = 8000 possible 3-mers (WORDLEN=3).  
+   - For each term, call `seed_random(term, WORDLEN)` to initialise the ISAAC RNG deterministically; populate a `SIGNATURE_LEN` (64) element vector with +1/-1 according to `DENSITY` (21%). Stored as contiguous `std::vector<short>` (or hash in OG).
+
+2. **Input parsing**  
+   - Read FASTA file line-by-line; accumulate sequence characters between header lines.  
+   - Strip trailing `\n` and `\r` characters to guarantee identical hashing across platforms.
+
+3. **Partitioning**  
+   - Default `PARTITION_SIZE = 2048`; step size = `PARTITION_SIZE / 2` (1024) to create overlapping windows.  
+   - For each sequence, create chunks `chunk_len = min(PARTITION_SIZE, remaining)`.
+
+4. **Signature accumulation**  
+   - Within each chunk, slide a window of length 3 and accumulate the ±1 weights into a 64-length integer array.  
+   - Pack every 8 counters into one byte (bit `1` if sum > 0, else `0`), yielding 8 bytes per partition.
+
+5. **Output format**  
+   - For each partition, write `int doc_id` (little-endian) followed by 8 signature bytes.  
+   - Files are named `<input>.part2048_sigs03_64` (or `.part16_...` in original OG).
+
+
+## 6. Implementation-Specific Notes
+
+### 6.1 `trueOG` (legacy single-thread)
+- Original MSVC code (partition size 16) used a hash map (uthash) to lazily create term signatures.
+- Uses `while (!feof)` pattern, which produces one extra trailing record because the loop runs once more after EOF. This is preserved for historical fidelity.
+- Linux-portable version (`signature_plots/trueOG.cpp`) adds wrappers so GCC can compile it, but logic matches OG.
+- A lightweight CLI guard now expects `<num_threads>` as the first argument (validated but ignored) so the entry point aligns with the newer executables and profiler tooling.
+- VS CPU profiler captures (see report asset `fig/prof-og-hash.png`) attribute ~53% of total CPU time to `find_sig`, with the hottest call site being the `HASH_FIND` probe—this evidence motivated the hash-table removal in the next iteration.
+
+### 6.2 `trueOG_vs`
+- Same algorithm and safe-library calls as original MSVC code; defaults changed to `PARTITION_SIZE = 2048` to align with modern builds.
+- CLI interface: `<num_threads> [input_fasta]`. Thread count is validated then ignored (it exists purely for the profiler harness). Still emits the extra EOF record.
+
+### 6.3 `trueOG_final`
+- Hash table replaced with a precomputed contiguous vocabulary (`vocab_signatures`), using the same base-20 index encoding as the threaded builds; `find_sig` becomes an array lookup rather than `uthash`.  
+- Retains single-threaded control flow while aligning data structures with the later implementations so profiling can isolate hash-map overhead removal as a separate optimisation step.  
+- CLI contract mirrors the VS profiler harness (`<num_threads> [input_fasta]`, thread count ignored) and includes MSVC-friendly stdlib shims.
+- Performance impact: ~7.86 s → ~3.0 s on `qut3_unix.fasta` (≈2.6× faster than the hash-table OG).
+
+### 6.4 `trueOG_final_portable`
+- Drops the VS-style `<num_threads>` guard; accepts an optional FASTA filename (`trueOG_final_portable [input_fasta]`) and defaults to `qut3.fasta`.  
+- Serves as the authoritative single-thread baseline after the hash-table optimisation; use this build in the report when quoting “optimised serial” timings (`compute 2.99 s`, `total 3.01 s` on `qut3_unix.fasta`) before introducing parallelism.  
+- Shares all compute/data paths with `trueOG_final`, so outputs remain identical and match the threaded/OpenMP signatures (confirmed via `compare_signatures.py`).  
+- Forms the logical pivot between profiling the legacy OG and demonstrating gains from std::thread/OpenMP, since it isolates the data-structure refactor from subsequent parallelism.
+- Performance impact: identical to `trueOG_final` (~3.0 s total), but with a portable CLI and no MSVC harness requirements.
+
+### 6.5 `signature_stdthread` / `_vs`
+- **Vocabulary preparation**  
+  * `vocab_signatures.assign((size_t)WORDS * SIGNATURE_LEN, 0)` reserves a contiguous array where signature `idx` occupies `[idx*64, (idx+1)*64)`.  
+  * The generation loop iterates through all base-20 numbers of length 3, constructs the term string in-place, zeroes the signature, and calls `compute_new_term_sig`. The inner function uses deterministic ISAAC RNG (seeded per term) to choose `non_zero/2` positive and negative positions with replacement avoidance.
+
+- **Document storage**  
+  * After parsing the FASTA, `std::vector<std::vector<SignatureBytes>> doc_signatures(sequences.size())` is allocated. Each element is a vector of 8-byte `SignatureBytes`; each document’s vector is owned exclusively by the worker handling that document, so no locking is required.
+
+- **Worker routine (`process_range`)**  
+  * Signature: `void process_range(const std::vector<std::string>& sequences, std::vector<std::vector<SignatureBytes>>& doc_signatures, int start_index, int end_index)`.  
+  * Executes `partition_sequence` for documents `[start_index, end_index)` and stores the resulting vector directly in `doc_signatures[doc]`.  
+  * The loop is purely CPU-bound; by the time the worker starts, all shared structures (vocabulary, sequences) are stable and read-only.
+
+- **Partitioning strategy**  
+  * The main thread calculates `base = total_docs / threads`.  
+  * Remaining documents are distributed one-by-one to the first `remainder` workers, leading to ranges of `base` or `base+1` documents.  
+  * Each range is contiguous, which guarantees minimal cache thrashing and deterministic output order.
+
+- **Thread lifecycle**  
+  1. `workers.emplace_back(process_range, std::cref(sequences), std::ref(doc_signatures), start_index, end_index);`  
+  2. After launching all threads, the main thread iterates over `workers` and calls `join()`.  
+  3. Only after `join` does the main thread write the output file sequentially (`for doc in doc_signatures`).
+
+- **Thread count management**  
+  * Raw user input (CLI argument or optional parameter) is validated.  
+  * Project clamps the requested thread count to `hardware_concurrency()` (fallback 1 if 0) and to the number of documents to avoid idle threads.  
+  * If `total_docs == 0`, the code gracefully skips thread creation and writes an empty file.
+
+- **Determinism guarantees**  
+  * Each document is processed by exactly one thread; no shared accumulation occurs.  
+  * Output occurs strictly in increasing document order after `join`, so signatures are identical regardless of scheduling differences.  
+  * RNG seeding depends solely on the k-mer string, so vocabulary signatures are deterministic, independent of thread interleaving.
+
+- **Profiling & tuning notes**  
+  * VS CPU profiler runs (mirrored with `perf stat`) confirmed ~92 % of runtime sat in `partition_sequence`/`compute_signature_chunk`; parallelising vocabulary generation or the final binary write added locks without moving the needle, so those stages remained serial.  
+  * An experiment that pushed documents into a shared work queue (instead of block ranges) introduced measurable contention on the queue mutex and worse cache locality; timing regressed by ~6 %, so the queue approach was dropped in favour of the current block distribution.  
+  * Captured profiler screenshots document the before/after timelines and underpin the narrative on focusing optimisation effort on the true hot path.
+- Performance impact: ≈3.0 s serial baseline → ≈1.0 s with 8 threads (≈3× faster than the optimised serial build, ≈11× faster than the original OG).
+
+- **Differences vs `trueOG_final_portable`**  
+  * Adds thread orchestration (`std::thread` vector, `process_range` helper) to parallelise the document loop while retaining the same vocabulary/data structures.  
+  * Maintains deterministic output order via contiguous document ranges and post-join serial file writes.  
+  * Thread count heuristics clamp to `hardware_concurrency()` and total documents; otherwise logic matches the portable baseline.
+
+- **VS variant**  
+  * Adds CLI usage guard and optional filename argument.  
+  * No other logic changes; the worker routine and scheduling remain identical.
+
+### 6.6 `signature_omp` / `_vs`
+- **Vocabulary and parsing**  
+  * Identical to the std::thread implementation: vocabulary generated on the master thread, sequences stored in a vector of strings, doc_signatures pre-sized to `sequences.size()`.
+
+- **Parallel loop mechanics**  
+  * `#pragma omp parallel for schedule(dynamic, 4)` instructs OpenMP to execute the loop body (`doc_signatures[doc] = partition_sequence(...)`) in parallel.  
+  * Dynamic scheduling with chunk size 4 lets threads steal work if some documents take longer (e.g., longer sequences), improving utilisation compared to static distribution.
+
+- **Thread control**  
+  * Portable build relies on `OMP_NUM_THREADS` or runtime defaults (`omp_get_max_threads`).  
+  * VS variant explicitly calls `omp_set_num_threads(num_threads)` using the CLI argument, and optional environment variable can still be used to override.
+
+- **Shared data safety**  
+  * `doc_signatures` is indexed by document; each iteration writes to a unique slot.  
+  * `vocab_signatures` and `sequences` are read-only.  
+  * No synchronisation primitives are required beyond the implicit barriers of the parallel loop.
+
+- **Output stage**  
+  * The loop completes, then the master thread opens the output file and serialises all document signatures in order. Since data was already partitioned per document, the writing logic mirrors the std::thread version exactly.
+
+- **Performance considerations**  
+  * Vocabulary generation remains single-threaded to avoid redundant work.  
+  * The main overhead in the parallel section is memory writes to `doc_signatures[doc]`, which are contiguous thanks to `reserve` inside `partition_sequence`, minimising reallocations.  
+  * Scheduling chunk size (4) was chosen empirically; it balances load without incurring excessive scheduling overhead.
+
+- **Profiling & tuning notes**  
+  * Static scheduling trials (`schedule(static, 4)` and full chunks per thread) highlighted load imbalance in the VS profiler timeline: shorter documents finished early, leaving other threads idle; measured wall time grew by ~8 %, so the configuration was discarded.  
+  * Enabling a second OpenMP region around the file write loop required a `critical` block, which the profiler flagged as I/O bound and 15–20 % slower overall; we reverted to the serial writer to keep hot-path parallelism focused on compute work.  
+  * Dynamic scheduling with chunk size 4 provided consistent utilisation without observable scheduling overhead, matching the tuned std::thread behaviour.
+- Performance impact: ≈1.0 s (8 threads) similar to std::thread, edging slightly faster in some runs; ≈11× faster than the original OG.
+
+- **Differences vs `trueOG_final_portable`**  
+  * Parallelises the document loop via `#pragma omp parallel for` with dynamic scheduling.  
+  * Relies on OpenMP runtime for thread management, but shares the same vocabulary/state structures and serial output phase as the portable baseline.
+
+### 6.7 “Final” signature build
+- The “final” executable mentioned in timing tests is a profiling-friendly wrapper around one of the parallel implementations (typically the std::thread version). Functionally identical to `signature_stdthread_vs`.
+
+### 6.8 Implementation challenges & lessons
+- **Hash-table removal:** Porting the OG build away from `uthash` required recreating the exact RNG-driven vocabulary while maintaining byte-for-byte outputs; intermediate attempts (e.g., queue-based signature caching) regressed cache locality and were dropped after profiling showed higher contention.  
+- **VS harness constraints:** Keeping the MSVC tooling happy meant mirroring safe CRT calls (`fopen_s`, `sprintf_s`) and preserving the dummy `<num_threads>` guard so automated profiler scripts continued to run.  
+- **std::thread scheduling:** Early experiments with a shared task queue introduced mutex bottlenecks and nondeterministic output ordering; switching to contiguous document blocks restored determinism and shaved ~6 % off runtime.  
+- **OpenMP tuning:** Static scheduling and parallel file I/O both produced measurable slowdowns (idle threads or critical-section hotspots). Settling on `schedule(dynamic, 4)` with serialised writes balanced the workload without adding overhead.  
+- **Threading journey:** Initial attempts used a shared task queue feeding worker threads; profiler traces showed mutex contention and cache thrash, so the design switched to contiguous document blocks with deterministic ordering.  
+- **OpenMP journey:** The first OpenMP prototype relied on `schedule(static)` and parallelised both compute and I/O; the static schedule aggravated load imbalance and the extra parallel region introduced contended `critical` sections. Iterating on `schedule(dynamic, 4)` and reverting the I/O loop to serial resolved these regressions.
+
+### 6.9 Dependency considerations
+- **ISAAC RNG (`ISAAC-rand.cpp`)**: shared across every executable; verified the flattened vocabulary respected the same seeding semantics so optimised builds stayed bit-identical to OG outputs.  
+- **uthash → contiguous vector**: removing `uthash.h` eliminated an external dependency but required rethinking memory layout and ensuring deterministic term ordering for regression testing.  
+- **CRT portability**: MSVC builds employ `fopen_s`/`sprintf_s` while portable targets use `<cstdio>` counterparts; conditional compilation keeps both toolchains warning-free without suppressing diagnostics globally.  
+- **Threading runtimes**: `std::thread` relies on the C++ threading library (and `pthread` on POSIX); thread-count capping via `hardware_concurrency()` avoids oversubscription on low-core hardware.  
+- **OpenMP runtime**: requires compiler flags (`-fopenmp` or `/openmp`) and the associated runtime; explicit `omp_set_num_threads` plus optional `OMP_NUM_THREADS` ensure consistent behaviour in lab and profiling runs.  
+- **Dataset normalisation**: CRLF → LF conversion acts as a soft dependency—without it legacy builds hash stray `\r` characters. The workflow captures this transformation so new datasets can follow the same process.
+
+### 6.10 Data dependencies & parallelisation limits
+- **OG hotspot**: In the hash-based OG, `find_sig` carried both the hashtable lookup and lazy signature creation. Misses allocated new `hash_term` structs and mutated global state; profiling established this as the dominant bottleneck before the vocabulary refactor.  
+- **Vocabulary generation**: The ISAAC RNG state evolves per call, so generating signatures in parallel would require per-term contexts and post-processing to preserve deterministic ordering. We keep the loop serial to maintain reproducibility and avoid synchronisation overhead.  
+- **Window accumulation**: The inner sliding-window loop updates a shared `doc_sig` accumulator. Parallelising it would demand atomics or per-thread buffers and a reduction step; both options were tested and rejected due to overhead and cache churn. Partition/document-level parallelism avoids these hazards.  
+- **Output ordering**: Downstream tools expect records sorted by document id. Consequently, all threaded variants perform the final file write on the main thread post-join; parallel writes with locks introduced critical sections that erased the compute speedups.  
+- **OpenMP scope**: Additional loops (vocabulary preparation, FASTA ingestion) exhibit loop-carried dependencies on mutable buffers or RNG state, so the chosen parallel region targets only the document loop where iterations are independent.
+- **CLI parity**: `trueOG_final_portable` adopts the same `<num_threads> [input_fasta]` signature as the VS builds; the numeric argument is validated but ignored, ensuring profiler scripts and batch jobs can swap binaries without changing invocation syntax.
+
+
+## 7. Data Handling & Normalisation
+
+- Original FASTA files used Windows CRLF line endings. The legacy OG code hashed the `\r` characters, leading to mismatched signatures.  
+- Created `qut3_unix.fasta` by converting CRLF → LF (`replace('\r\n', '\n')`).  
+- All modern builds strip `\r` as they read, so they produce identical output regardless of line endings.  
+- For reproducibility, keep both files:
+  - `qut3.fasta` (original).  
+  - `qut3_unix.fasta` (normalised for cross-platform tests).
+
+
+## 8. Verification Methodology & Results
+
+1. **Compilation**  
+   - Built OG (`trueOG_ref`), std::thread (`signature_stdthread_new`), and OpenMP (`signature_omp_ref`) on Linux.  
+   - Built VS variants for profiling.
+
+2. **Execution**  
+   - Ran each executable on `qut3_unix.fasta` (PARTITION 2048).  
+   - Captured resulting binaries (`*_qut3.bin`).
+
+3. **Comparison** (`compare_signatures.py`)  
+   - Reports Hamming distances, doc-id mismatches, and record counts.  
+   - Results:
+     * Std::thread vs OpenMP: 200 000/200 000 perfect matches (0 bit differences).  
+     * OG vs others: 200 000 matches, plus OG’s extra trailing record (record 200000).  
+   - Generated plots stored in `signature_plots/…` subdirectories for documentation.
+
+4. **Timing**  
+   - Single-thread OG: ~11.5 s (avg of three runs).  
+   - Std::thread (8 threads): ~1.0 s.  
+   - OpenMP (8 threads): ~0.98 s.
+
+
+## 9. Testing Utilities
+
+- **compare_signatures.py** usage example:  
+  ```bash
+  python3 compare_signatures.py stdthread_qut3.bin omp_qut3.bin \
+      --output-dir signature_plots/std_vs_omp --sample-size 200
+  ```
+  Produces textual summary and PNG plots (`distance_histogram.png`, `distance_sequence.png`).
+
+- **Normalisation helper** (already used once):  
+  ```python
+  from pathlib import Path
+  Path('qut3_unix.fasta').write_text(Path('qut3.fasta').read_text().replace('\r\n', '\n'))
+  ```
+
+
+## 10. Known Behaviours & Caveats
+
+- OG builds produce one extra trailing record because of `while (!feof)`; this is preserved intentionally.
+- All implementations rely on deterministic ISAAC RNG seeded by the term; any change to `DENSITY`, `WORDLEN`, or alphabet ordering invalidates stored signatures.
+- The binaries write raw little-endian integers (doc ids) followed by 8 bytes of packed bits; external consumers must interpret the format accordingly.
+- Visual Studio projects need command arguments (and optionally `OMP_NUM_THREADS`) configured to avoid hitting the usage guard.
+
+
+## 11. Reproducing the Entire Experiment Pack
+
+1. Clone repo / ensure `uthash.h`, `ISAAC-rand.cpp`, FASTA files, and new scripts are present.  
+2. Build `trueOG_ref`, `signature_stdthread_new`, `signature_omp_ref`.  
+3. Run each on `qut3_unix.fasta` (or `qut3.fasta` + note the CR handling).  
+4. Rename outputs to retain them (`mv qut3_unix.fasta.part2048_sigs03_64 stdthread_qut3.bin`, etc.).  
+5. Launch `compare_signatures.py` for each pair.  
+6. For VS builds, copy the `_vs.cpp` files into a project, set command args (`1 qut3.fasta`, `8 qut3.fasta`, …), and rebuild; confirm identical outputs.
+
+
+## 12. Next Steps / Suggestions
+
+- Automate the comparison workflow (e.g., simple shell or PowerShell script) for regression testing.  
+- Consider removing the OG extra record in downstream consumers, or document the quirk wherever the dataset is used.  
+- Capture timing plots or tables for the report using the recorded averages and standard deviations.  
+- Optionally integrate `compare_signatures.py` into CI to assert parity between implementations.
+
+
+## 13. Suggested Report Structure
+
+Use the collected material to build a coherent report. A recommended outline:
+
+1. **Introduction / Problem Context**  
+   - Brief description of the motif-signature goal, legacy OG baseline, and motivation for modern threaded versions.
+
+2. **Dataset & Toolchain Setup**  
+   - FASTA inputs (CRLF vs LF), normalisation step, compilers/platforms, external dependencies.
+
+3. **Algorithm Overview (common core)**  
+   - Vocabulary generation, partitioning strategy, signature packing; include diagrams/pseudo-code if helpful.
+
+4. **Implementation Details**  
+   4.1 Legacy OG (hash table, EOF artefact).  
+   4.2 std::thread implementation (work partitioning, determinism, thread management).  
+   4.3 OpenMP implementation (dynamic scheduling, shared data).  
+   4.4 Visual Studio wrappers / profiling builds (CLI contract, preserved behaviour).
+
+5. **Validation Methodology**  
+   - Normalised FASTA, `compare_signatures.py`, plots, OG extra record discussion.
+
+6. **Performance Evaluation**  
+   - Timing table for OG vs std::thread vs OpenMP at 8 threads; include speedup commentary and charts if desired.
+
+7. **Discussion / Lessons**  
+   - CRLF handling, deterministic RNG, std::thread vs OpenMP trade-offs, reproducibility considerations.
+
+8. **Conclusion & Future Work**  
+   - Summarise correctness parity, performance gains, next investigation points.
+
+9. **Appendices (optional)**  
+   - Command listings, sample plots, excerpts from `change_log.txt` or `handover.md`.
+
+Following this structure aligns the narrative with the work performed and ensures reviewers can trace requirements through to validation.
+
+All relevant modifications are listed in `change_log.txt`. This handover plus the change log should give reviewers and future developers a complete picture of the work done and how to reproduce the results.

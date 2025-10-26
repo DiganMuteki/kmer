@@ -1,0 +1,131 @@
+Signature Generation Project – Code Overview
+===========================================
+
+This file summarises every source component in the workspace, capturing its intent,
+key functions, notable behaviours, and cross-cutting dependencies. Use it as a quick
+map from the code layout to the narrative described in the handover.
+
+1. Core Algorithm Variants
+--------------------------
+
+signature_plots/trueOG.cpp  
+    - Legacy MSVC single-thread build (partition size 16) ported for POSIX toolchains.  
+    - Depends on `uthash.h` to lazily memoise 3-mer signatures via `hash_term` records.  
+    - Functions: `compute_new_term_sig`, `find_sig`, `compute_signature`, `partition`, `main`.  
+    - Preserves historical quirks (`while (!feof)`, extra trailing record, CLI dummy thread arg).
+
+signature_plots/trueOG_vs.cpp  
+    - Visual Studio companion to the OG build. Same logic and hash-table usage, but defaults to
+      partition 2048 and strips CR characters during FASTA ingest.  
+    - CLI: `<num_threads> [input_fasta]`; thread count validated and ignored.  
+    - Uses MSVC safe CRT APIs (`fopen_s`, `sprintf_s`, `strncpy_s`).
+
+signature_plots/trueOG_final.cpp  
+    - Hash-table-free OG using the flattened vocabulary array (`vocab_signatures`).  
+    - Retains VS harness contract (`<num_threads> [input_fasta]`) plus `fopen_s/sprintf_s` branches.  
+    - Serves as the MSVC-friendly reference once the hash hotspot is removed.
+
+signature_plots/trueOG_final_portable.cpp  
+    - Portable façade around the same flattened vocabulary implementation.  
+    - CLI: `[input_fasta]` (defaults to `qut3.fasta`).  
+    - Canonical single-thread baseline post-optimisation; matches threaded/OpenMP outputs exactly.
+
+oldsignature.cpp  
+    - Snapshot of the original MSVC project (partition size 16) with minimal POSIX tweaks.  
+    - Retains `uthash` vocabulary, `fopen`/`snprintf`, optional CLI overrides for filename and partition.  
+    - Useful for verifying cross-platform parity with the “OG” logic.
+
+oldsignature_portable.cpp  
+    - Modernised single-thread baseline written around `std::unordered_map` and C++ streams.  
+    - Provides safe newline handling, `partition_sequence` helper, and deterministic RNG use.  
+    - Historically used as an intermediate portability step before the current refactors.
+
+signature_stdthread.cpp  
+    - Multi-threaded refactor using `std::thread`.  
+    - Key routines: `compute_new_term_sig`, `term_to_index`, `partition_sequence`, `process_range`.  
+    - Handles thread count clamping, contiguous document blocks, and deterministic output ordering.
+
+signature_stdthread_vs.cpp  
+    - Visual Studio façade for the std::thread build.  
+    - Adds CLI guard enforcing `<num_threads> [input_fasta]`, caps thread count at hardware limits.
+
+signature.cpp  
+    - OpenMP implementation (`#pragma omp parallel for schedule(dynamic, 4)`).  
+    - Produces identical outputs and timings to the std::thread build when configured with
+      the same number of threads.
+
+signature_vs.cpp  
+    - MSVC dual-mode build combining std::thread (default) with optional OpenMP instrumentation.  
+    - Useful for profiling within Visual Studio across both threading technologies.
+
+signature_omp_vs.cpp  
+    - Visual Studio oriented OpenMP variant that consumes `<num_threads> [input_fasta]` and calls
+      `omp_set_num_threads`.
+
+signature_pthreads.cpp  
+    - POSIX `pthread` implementation used for experimentation.  
+    - Distributes contiguous document ranges across threads, mirroring the std::thread logic.
+
+sig_tst.cpp  
+    - Early OpenMP prototype that parallelised both compute and file I/O; retained for reference.
+
+2. Shared Utilities
+-------------------
+
+ISAAC-rand.cpp  
+    - Deterministic ISAAC RNG adapted for term signature generation.  
+    - Exposes `seed_random(char*, int)` and `random_num(short)` used by every implementation.
+
+compare_terms.cpp  
+    - Diagnostic utility comparing legacy hash-generated signatures with the new array-based generator
+      to validate RNG determinism.
+
+compare_signatures.py  
+    - Python validation tool (reads raw signature binaries, computes Hamming distances, and plots).  
+    - Dependencies: Python 3, `matplotlib`. CLI accepts `file_a`, `file_b`, optional sampling and output dir.
+
+3. Datasets and Outputs
+-----------------------
+
+qut2.fasta, qut3.fasta  
+    - Original FASTA datasets (CRLF endings).  
+    - `*_unix.fasta` hold line-ending-normalised copies used for deterministic cross-platform runs.
+
+*_qut3.bin, *.part2048_sigs03_64  
+    - Captured outputs from various builds; kept for regression comparison and report figures.
+
+4. Documentation & Logs
+-----------------------
+
+handover.md  
+    - Primary narrative covering design decisions, profiling data, build steps, and verification results.
+
+change_log.txt  
+    - Chronological log of modifications, experiments, and artefact generation.
+
+details_page.txt / submission_page.txt  
+    - Assignment brief copies pulled from Canvas for reference.
+
+code_overview.txt (this file)  
+    - High-level map of every code asset; update when new files are added.
+
+5. Build Artifacts & Scripts
+----------------------------
+
+trueOG_ref, signature_stdthread_new, signature_omp_ref, etc.  
+    - Compiled binaries stored in the workspace for quick re-testing.
+
+*_trunc.cpp, *_test, *_vs  
+    - Experimental or profiling variants (e.g., truncated loops, instrumentation).  
+    - Retained to document the investigation path; not part of the shipping deliverables.
+
+6. Key Cross-Cutting Notes
+--------------------------
+
+- Every implementation relies on `vocab_signatures` being precomputed with identical RNG seeding,
+  ensuring deterministic signatures across builds.
+- FASTA ingestion strips trailing `\r` to avoid cross-platform mismatches.  
+- Output format is stable: 4-byte little-endian doc id + 8 bytes of packed bits per partition window.  
+- The “final portable” build is the single-thread baseline referenced in the report; threaded versions
+  add concurrency on top of its data structures without altering outputs.
+
