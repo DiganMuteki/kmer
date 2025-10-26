@@ -161,6 +161,8 @@ void process_range(const std::vector<std::string>& sequences,
 
 int main(int argc, char* argv[])
 {
+    auto t_start = std::chrono::high_resolution_clock::now();
+
     if (argc < 2)
     {
         printf("Usage: %s <num_threads> [input_fasta]\n", argv[0]);
@@ -174,7 +176,7 @@ int main(int argc, char* argv[])
         return 1;
     }
 
-    const char* filename = "qut3.fasta";
+    const char* filename = "qut2.fasta";
     if (argc > 2) filename = argv[2];
 
     WORDLEN = 3;
@@ -310,8 +312,9 @@ int main(int argc, char* argv[])
     fclose(sig_file);
 
     auto t_end = std::chrono::high_resolution_clock::now();
+
     std::chrono::duration<double> compute_time = t_compute - t_begin;
-    std::chrono::duration<double> total_time = t_end - t_begin;
+    std::chrono::duration<double> total_time   = t_end - t_start;
 
     printf("%s compute %f seconds\n", filename, compute_time.count());
     printf("%s total   %f seconds\n", filename, total_time.count());

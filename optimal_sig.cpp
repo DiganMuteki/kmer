@@ -151,7 +151,9 @@ int power(int n, int e)
 
 int main(int argc, char* argv[])
 {
-    const char* filename = "qut3.fasta";
+    auto t_start = std::chrono::high_resolution_clock::now();
+
+    const char* filename = "qut2.fasta";
     int threads_hint = 0;
 
     if (argc > 1)
@@ -275,8 +277,9 @@ int main(int argc, char* argv[])
     fclose(sig_file);
 
     auto t_end = std::chrono::high_resolution_clock::now();
+
     std::chrono::duration<double> compute_time = t_compute - t_begin;
-    std::chrono::duration<double> total_time = t_end - t_begin;
+    std::chrono::duration<double> total_time = t_end - t_start;
 
     printf("%s compute %f seconds\n", filename, compute_time.count());
     printf("%s total   %f seconds\n", filename, total_time.count());
