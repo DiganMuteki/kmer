@@ -1,0 +1,169 @@
+18/10/2025, 22:54
+
+CAB401 Parallelization Project: Details Page: CAB401_25se2 High Performance and Parallel Computing
+
+CAB401 Parallelization Project: Details
+
+Page
+
+Overview
+
+Task description:
+
+This assessment task requires you to select a real world software application and manually parallelize it.
+
+Use of generative Artificial Intelligence (AI)
+
+The use generative AI tools such as ChatGPT, including programming/coding assistants such as CoPilot
+
+is strictly forbidden for all assessment tasks in CAB401 and will be considered as an act of major
+academic misconduct.
+
+Unit Learning Outcomes assessed:
+
+ULO 1: Relate principles of parallel programming to features of parallel hardware.
+
+ULO 2: Transform sequential software applications into high performance parallel applications using state
+
+of the art programming techniques.
+
+What you need to do
+
+You are to select a real world software application and manually parallelize it. That is, take any application
+
+that is not written in an explicitly parallel fashion and transform it so that it executes as efficiently as
+possible on a particular parallel computer. The software application can be whatever you like but you will
+obviously need access to its source code. It can for example be an open source application or an application
+
+that you have developed yourself, or perhaps one from your workplace. To be amenable to parallelization it
+will need to be relatively computationally intensive, i.e. it will need to perform sufficient computation so
+that parallelizing that computation will potentially produce a noticeable difference in perceived execution
+time. For example, a word processing application would probably not be a good candidate as such
+
+applications are already normally adequately responsive to user interaction. Note, that some applications are
+more amenable to parallelization than others. It is not expected that a perfect linear speedup will be
+achieved for all applications – simply that your parallelization achieves as much performance improvement
+as is available.
+
+Hardware
+You can use any parallel hardware that you have access to. You can make use of parallel computers
+provided by QUT or any other parallel computers you personally you have access to. It can be any form of
+
+https://canvas.qut.edu.au/courses/20361/pages/cab401-parallelization-project-details-page
+
+1/3
+
+18/10/2025, 22:54
+
+CAB401 Parallelization Project: Details Page: CAB401_25se2 High Performance and Parallel Computing
+
+parallel computer, e.g. multi-core, cluster, SMP, shared memory, distributed memory, GPU, etc. See criteria
+regarding scalable parallelism.
+
+Software
+
+Again you can use whatever software that you have access to. This includes compilers, profilers, debuggers,
+libraries, etc. Some such software is available through QUT. You may use whatever programming language
+you wish and whatever parallel frameworks and libraries that you have access to.
+
+Please use the Parallelization project channel in our MS Teams site if you have any questions regarding this
+
+assessment item.
+
+What to submit
+
+Project Proposal, due Friday of week 7: Submit online form
+(https://canvas.qut.edu.au/courses/20361/assignments/198555) , describing:
+
+1. A brief description of the sequential application that you have selected to parallelize. What does it do?
+
+Where did you find it? (1 paragraph max)
+
+2. Discuss whether you think the proposed application performs sufficient computation so that
+
+parallelizing it will potentially produce a noticeable difference in perceived execution time. (1 paragraph
+max).
+
+3. What parallel hardware and parallelization language/framework are you considering? E.g. targeting
+
+NVidia GPU programmed using CUDA. (1 paragraph max).
+
+The project proposal is designed to give you constructive feedback and to ensure you are on a productive
+path prior to final submission.
+
+Final Submission, due Friday of week 13, a zip file
+(https://canvas.qut.edu.au/courses/20361/assignments/198554) including both:
+
+1. A report of 9-12 pages (not including appendices) describing your outcomes. The report should address
+
+the following criteria:
+A. An explanation of the original sequential application being parallelized, what it does (blackbox) and
+how it works (a high level description of software’s design/architecture). This might include call
+graphs, class diagrams, etc – whatever you find useful to describe thestructure of the original
+sequential application.
+
+B. Your analysis of potential parallelism within the application. This might include identification of
+
+existing loops or control flow constructs where parallelism might befound. Explanation of the data
+and control dependences that you analysed to determinewhich sections of code were safe to
+parallelize. Which of these is likely to be of sufficient granularity to be worth exploiting? Is it
+scalable parallelism? A discussion of changes required to expose parallelism, such as replacing
+algorithms or code restructuring transformations.
+
+C. How did you map computation and/or data to processors? Which parallelism abstractions or
+
+programming language constructs did you use to perform synchronization?
+
+D. Timing and profiling results, both before and after parallelization and a speedup graph.
+
+https://canvas.qut.edu.au/courses/20361/pages/cab401-parallelization-project-details-page
+
+2/3
+
+18/10/2025, 22:54
+
+CAB401 Parallelization Project: Details Page: CAB401_25se2 High Performance and Parallel Computing
+
+E. How did you test that the parallel version produced the exact same results as the original sequential
+
+version?
+
+F. A description of the compilers, software, tools, and techniques you used to parallelize the
+
+application.
+
+G. The story of how you overcame performance problems/barriers (e.g. load imbalance, memory
+
+contention, granularity, data dependencies, etc) to improve parallel performance.
+
+H. An explanation of the code that you added or modified to parallelize the application (including
+
+source code line count).
+
+I. Reflect on your outcome – What have you learnt? How successful was your attempt? Do you think
+
+you’ve done as well as is possible? What might you have done differently?
+
+2. Your source code (both before and after versions) together with instructions for compiling, running,
+
+hardware requirements and realistic input data sets.
+
+Feedback:
+
+Under normal circumstances, you will receive marks for each criterion via a Canvas rubric within 10-15
+working days of submission. Click on Grades to see your results. Usually the reason for each choice of mark
+is self-evident, the marker will include some written feedback about your performance. You should use this
+feedback to strengthen your performance in the next assessment item.  
+
+Moderation:
+
+All staff who are assessing your work meet to discuss and compare their judgements before marks or grades
+are finalised.
+
+TEQSA PRV12079 | CRICOS 00213J | ABN 83 791 724 622
+
+https://canvas.qut.edu.au/courses/20361/pages/cab401-parallelization-project-details-page
+
+3/3
+
+

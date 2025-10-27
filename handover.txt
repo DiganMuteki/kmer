@@ -311,19 +311,24 @@ Use the collected material to build a coherent report. A recommended outline:
    - Vocabulary generation, partitioning strategy, signature packing; include diagrams/pseudo-code if helpful.
 
 4. **Implementation Details**  
-   4.1 Legacy OG (hash table, EOF artefact).  
-   4.2 std::thread implementation (work partitioning, determinism, thread management).  
-   4.3 OpenMP implementation (dynamic scheduling, shared data).  
-   4.4 Visual Studio wrappers / profiling builds (CLI contract, preserved behaviour).
+  4.1 Legacy OG (hash table, EOF artefact).  
+  4.2 std::thread implementation (work partitioning, determinism, thread management).  
+  4.3 OpenMP implementation (dynamic scheduling, shared data).  
+  4.4 Visual Studio wrappers / profiling builds (CLI contract, preserved behaviour).
 
 5. **Validation Methodology**  
-   - Normalised FASTA, `compare_signatures.py`, plots, OG extra record discussion.
+  - Normalised FASTA, `compare_signatures.py`, plots, OG extra record discussion.
 
 6. **Performance Evaluation**  
-   - Timing table for OG vs std::thread vs OpenMP at 8 threads; include speedup commentary and charts if desired.
+  - Timing table for OG vs std::thread vs OpenMP at 8 threads; include speedup commentary and charts if desired.
+  - Latest std::thread sanity checks (Jun 2025):    
+    * `./signature_std_cli qut3.fasta 8` → `compute 0.319 s`, `total 0.344 s`, wall-clock `0:00.60 real`.    
+    * Prototype queue-driven build `./signature_stdthread_vs_test_opt 8 qut3.fasta` → `vocab 0.017 s`, `parse 0.528 s`, `compute 0.697 s`, `program 0.722 s`, wall-clock `0:00.73 real`.    
+    * `compare_signatures.py qut3.fasta.part8192_sigs03_64.std_baseline qut3.fasta.part8192_sigs03_64.test_opt` → 200000/200000 records identical (0 Hamming distance).    
+    These confirm the production std::thread executable stays the fastest option and the experimental pipeline remains slower despite deterministic output.
 
 7. **Discussion / Lessons**  
-   - CRLF handling, deterministic RNG, std::thread vs OpenMP trade-offs, reproducibility considerations.
+  - CRLF handling, deterministic RNG, std::thread vs OpenMP trade-offs, reproducibility considerations.
 
 8. **Conclusion & Future Work**  
    - Summarise correctness parity, performance gains, next investigation points.

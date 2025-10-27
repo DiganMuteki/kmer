@@ -90,3 +90,15 @@ Visual Studio specific variants
     - Porting the VS harness demanded care around safe CRT calls (`sprintf_s`, `fopen_s`) and dummy CLI threading guards so tooling continued to function during profiler captures.
     - Threading with `std::thread` introduced challenges around work partitioning, avoiding contention, and maintaining deterministic output ordering; the final contiguous block scheduling replaced an earlier task-queue design that suffered mutex bottlenecks.
     - The OpenMP path required tuning of scheduling strategies (dynamic vs static) and avoiding overzealous parallel I/O that triggered critical-section hot spots; detailed profiling confirmed the chosen configuration balanced load without regressing throughput.
+
+14. Optimised serial computation further:
+    - Replaced dense 64-slot signature updates with a sparse representation (store only non-zero indices/values) and rewrote the accumulation loop to iterate ~13 entries per k-mer instead of 64.
+    - Dropped the now-unused dense vocabulary store, keeping a lightweight `SparseTerm` array shared by both portable and VS builds.
+    - Achieved ~1.1–1.5 s total runtime for the single-thread baseline on `qut3_unix.fasta` (down from ~3.0 s) while preserving bit-for-bit parity with threaded/OpenMP outputs.
+    - Increased `PARTITION_SIZE` to 8192, reducing per-doc overhead while keeping downstream output compatible.
+    - Added a top-level program timer so reports can quote whole-of-executable runtime alongside compute-only measurements.
+
+15. May 2026 follow-up instrumentation and parser tweaks:
+    - Updated `signature_stdthread_vs.cpp` to avoid storing per-sequence `std::string`s: the FASTA file is loaded once into a contiguous buffer and each worker reconstructs a clean slice based on recorded header offsets. Maintains deterministic ordering while reducing parse overhead and halving the serialized portion to ~0.27 s (8-thread program time ≈0.55 s vs 1-thread ≈1.29 s).
+    - Added whole-program timers to the Visual Studio wrapper and OpenMP portable build so compute, total (post-parse), and end-to-end timings can be compared directly for Amdahl analysis. Current OpenMP numbers: `compute ≈0.26 s`, `total ≈0.29 s`, `program ≈0.51 s` on `qut3.fasta`, implying ~51 % serial work.
+    - Documented the abandoned streaming producer/consumer prototype (mutex contention drove runtime above 8 s) and kept the deterministic doc-block scheduling as the recommended approach.
